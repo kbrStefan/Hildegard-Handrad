@@ -9,8 +9,16 @@
   <body>
     <main class="app-shell">
       <header class="card">
-        <h1>Hildegard-Handrad</h1>
-        <p>Remote Control App for Marlin based CNC machines</p>
+        <div class="header-row">
+          <div>
+            <h1>Hildegard-Handrad</h1>
+            <p>Remote Control App for Marlin based CNC machines</p>
+          </div>
+          <div class="conn-indicator" id="connIndicator" aria-live="polite">
+            <span class="dot offline" id="connDot"></span>
+            <span id="connText">Not connected</span>
+          </div>
+        </div>
       </header>
 
       <section class="card grid-2">
@@ -30,13 +38,20 @@
         <input id="gcodeInput" type="file" accept=".gcode,.nc,.tap,.txt" />
         <button id="uploadBtn" class="btn primary" type="button">Upload G-code</button>
         <button id="startBtn" class="btn success" type="button">Start Job</button>
+        <button id="pauseBtn" class="btn warn" type="button">Pause</button>
+        <button id="resumeBtn" class="btn success" type="button">Resume</button>
         <button id="stopBtn" class="btn danger" type="button">Stop Job</button>
+        <button id="estopBtn" class="btn estop" type="button">Emergency Stop</button>
       </section>
 
       <section class="card">
         <h2>Machine Motion</h2>
         <div class="motion-controls">
-          <button id="homeAllBtn" class="btn primary" type="button">Home All (G28)</button>
+          <div class="home-row" role="group" aria-label="Homing controls">
+            <button id="homeXBtn" class="btn primary" type="button">Home X</button>
+            <button id="homeYBtn" class="btn primary" type="button">Home Y</button>
+            <button id="homeZBtn" class="btn primary" type="button">Home Z</button>
+          </div>
           <div class="jog-setup">
             <label>
               Jog Step (mm)
@@ -47,13 +62,18 @@
               <input id="jogFeedrateInput" type="number" step="1" value="900" />
             </label>
           </div>
-          <div class="jog-grid" role="group" aria-label="Jog controls">
-            <button data-axis="Y" data-dir="1" class="btn success jog-btn" type="button">Y+</button>
-            <button data-axis="Z" data-dir="1" class="btn success jog-btn" type="button">Z+</button>
-            <button data-axis="X" data-dir="-1" class="btn jog-btn" type="button">X-</button>
-            <button data-axis="X" data-dir="1" class="btn jog-btn" type="button">X+</button>
-            <button data-axis="Z" data-dir="-1" class="btn danger jog-btn" type="button">Z-</button>
-            <button data-axis="Y" data-dir="-1" class="btn danger jog-btn" type="button">Y-</button>
+          <div class="jog-cross" role="group" aria-label="Jog controls">
+            <div class="cell empty"></div>
+            <button data-axis="Y" data-dir="1" class="btn jog-btn cell" type="button">Y+</button>
+            <button data-axis="Z" data-dir="1" class="btn success jog-btn cell" type="button">Z+</button>
+
+            <button data-axis="X" data-dir="-1" class="btn jog-btn cell" type="button">X-</button>
+            <button class="btn cell center" type="button" disabled>+</button>
+            <button data-axis="X" data-dir="1" class="btn jog-btn cell" type="button">X+</button>
+
+            <div class="cell empty"></div>
+            <button data-axis="Y" data-dir="-1" class="btn jog-btn cell" type="button">Y-</button>
+            <button data-axis="Z" data-dir="-1" class="btn danger jog-btn cell" type="button">Z-</button>
           </div>
         </div>
       </section>

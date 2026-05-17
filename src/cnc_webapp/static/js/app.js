@@ -4,6 +4,8 @@ const baudrateInput = document.getElementById("baudrateInput");
 const gcodeInput = document.getElementById("gcodeInput");
 const jogDistanceInput = document.getElementById("jogDistanceInput");
 const jogFeedrateInput = document.getElementById("jogFeedrateInput");
+const connDot = document.getElementById("connDot");
+const connText = document.getElementById("connText");
 
 async function callApi(path, options = {}) {
   const response = await fetch(path, {
@@ -22,9 +24,18 @@ async function refreshStatus() {
   try {
     const data = await callApi("/api/status", { method: "GET", headers: {} });
     statusOut.textContent = JSON.stringify(data.status, null, 2);
+    renderConnection(data.status);
   } catch (err) {
     statusOut.textContent = `Status unavailable: ${err.message}`;
+    renderConnection({ connected: false });
   }
+}
+
+function renderConnection(status) {
+  const connected = Boolean(status.connected);
+  connDot.classList.toggle("online", connected);
+  connDot.classList.toggle("offline", !connected);
+  connText.textContent = connected ? "Connected" : "Not connected";
 }
 
 document.getElementById("connectBtn").addEventListener("click", async () => {
@@ -91,9 +102,59 @@ document.getElementById("stopBtn").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("homeAllBtn").addEventListener("click", async () => {
+document.getElementById("pauseBtn").addEventListener("click", async () => {
   try {
-    await callApi("/api/home", { method: "POST", body: JSON.stringify({}) });
+    await callApi("/api/job/pause", { method: "POST", body: JSON.stringify({}) });
+    await refreshStatus();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+document.getElementById("resumeBtn").addEventListener("click", async () => {
+  try {
+    await callApi("/api/job/resume", { method: "POST", body: JSON.stringify({}) });
+    await refreshStatus();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+document.getElementById("estopBtn").addEventListener("click", async () => {
+  const confirmed = window.confirm("Send emergency stop (M112) now?");
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await callApi("/api/job/estop", { method: "POST", body: JSON.stringify({}) });
+    await refreshStatus();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+document.getElementById("homeXBtn").addEventListener("click", async () => {
+  try {
+    await callApi("/api/home", { method: "POST", body: JSON.stringify({ axes: ["X"] }) });
+    await refreshStatus();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+document.getElementById("homeYBtn").addEventListener("click", async () => {
+  try {
+    await callApi("/api/home", { method: "POST", body: JSON.stringify({ axes: ["Y"] }) });
+    await refreshStatus();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+document.getElementById("homeZBtn").addEventListener("click", async () => {
+  try {
+    await callApi("/api/home", { method: "POST", body: JSON.stringify({ axes: ["Z"] }) });
     await refreshStatus();
   } catch (err) {
     alert(err.message);

@@ -64,6 +64,39 @@ def job_stop():
     return jsonify({"ok": True, "status": controller.status()})
 
 
+@api_bp.post("/job/pause")
+def job_pause():
+    controller = get_controller()
+    try:
+        controller.pause_job()
+    except RuntimeError as err:
+        return jsonify({"ok": False, "error": str(err)}), HTTPStatus.BAD_REQUEST
+
+    return jsonify({"ok": True, "status": controller.status()})
+
+
+@api_bp.post("/job/resume")
+def job_resume():
+    controller = get_controller()
+    try:
+        controller.resume_job()
+    except RuntimeError as err:
+        return jsonify({"ok": False, "error": str(err)}), HTTPStatus.BAD_REQUEST
+
+    return jsonify({"ok": True, "status": controller.status()})
+
+
+@api_bp.post("/job/estop")
+def job_estop():
+    controller = get_controller()
+    try:
+        controller.emergency_stop()
+    except RuntimeError as err:
+        return jsonify({"ok": False, "error": str(err)}), HTTPStatus.BAD_REQUEST
+
+    return jsonify({"ok": True, "status": controller.status()})
+
+
 @api_bp.get("/status")
 def status():
     return jsonify({"ok": True, "status": get_controller().status()})

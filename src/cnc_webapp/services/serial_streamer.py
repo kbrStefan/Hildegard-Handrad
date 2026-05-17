@@ -4,6 +4,7 @@ import threading
 import time
 from collections import deque
 from enum import Enum
+import re
 from typing import Any
 
 import serial
@@ -23,6 +24,7 @@ class JobState(str, Enum):
     EMPTY = "empty"
     LOADED = "loaded"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     STOPPED = "stopped"
     ERROR = "error"
@@ -52,6 +54,7 @@ class SerialStreamer:
         self._job_lines: list[str] = []
         self._job_index = 0
         self._job_running = False
+        self._job_paused = False
 
         self._outstanding_payload_sizes: deque[int] = deque()
         self._outstanding_chars = 0
@@ -63,6 +66,10 @@ class SerialStreamer:
         self._mode = MachineMode.DISCONNECTED
         self._job_state = JobState.EMPTY
         self._last_error_message = ""
+        self._ack_timeout_seconds = 30.0
+        self._last_ack_time = time.monotonic()
+
+        self._ok_re = re.compile(r"(^|\s)ok($|\s|:)")
 
     def connect(self, port: str | None = None, baudrate: int | None = None) -> None:
         with self._state_lock:
@@ -85,6 +92,7 @@ class SerialStreamer:
             self._stop_event.clear()
             self._mode = MachineMode.IDLE
             self._last_error_message = ""
+            self._last_ack_time = time.monotonic()
 
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -98,6 +106,7 @@ class SerialStreamer:
             self._serial_conn = None
             self._mode = MachineMode.DISCONNECTED
             self._job_state = JobState.STOPPED if self._job_lines else JobState.EMPTY
+            self._job_paused = False
 
         if conn and conn.is_open:
             conn.close()
@@ -113,6 +122,8 @@ class SerialStreamer:
             self._outstanding_chars = 0
             self._last_messages.clear()
             self._job_state = JobState.LOADED
+            self._job_paused = False
+            self._last_ack_time = time.monotonic()
             if self._mode not in (MachineMode.ALARM, MachineMode.ERROR):
                 self._mode = MachineMode.IDLE
 
@@ -125,6 +136,7 @@ class SerialStreamer:
             if self._job_running:
                 return
             self._job_running = True
+            self._job_paused = False
             self._job_state = JobState.RUNNING
             self._mode = MachineMode.RUNNING
 
@@ -134,9 +146,49 @@ class SerialStreamer:
     def stop_job(self) -> None:
         with self._state_lock:
             self._job_running = False
+            self._job_paused = False
             self._job_state = JobState.STOPPED if self._job_lines else JobState.EMPTY
             if self._mode not in (MachineMode.ALARM, MachineMode.ERROR):
                 self._mode = MachineMode.IDLE
+
+    def pause_job(self) -> None:
+        with self._state_lock:
+            if not self._job_running:
+                raise RuntimeError("No running job to pause")
+            if self._job_paused:
+                return
+            self._job_paused = True
+            self._job_state = JobState.PAUSED
+            if self._mode == MachineMode.RUNNING:
+                self._mode = MachineMode.IDLE
+
+    def resume_job(self) -> None:
+        with self._state_lock:
+            if not self._job_running:
+                raise RuntimeError("No running job to resume")
+            if not self._job_paused:
+                return
+            self._job_paused = False
+            self._job_state = JobState.RUNNING
+            if self._mode not in (MachineMode.ALARM, MachineMode.ERROR):
+                self._mode = MachineMode.RUNNING
+
+    def emergency_stop(self) -> None:
+        with self._state_lock:
+            conn = self._serial_conn
+            if not conn or not conn.is_open:
+                raise RuntimeError("Serial is not connected")
+
+            self._job_running = False
+            self._job_paused = False
+            self._job_state = JobState.ERROR
+            self._mode = MachineMode.ERROR
+            self._last_error_message = "Emergency stop triggered"
+            self._outstanding_payload_sizes.clear()
+            self._outstanding_chars = 0
+
+        conn.write(b"M112\n")
+        conn.flush()
 
     def home(self, axes: list[str] | None = None) -> None:
         normalized_axes = []
@@ -193,6 +245,7 @@ class SerialStreamer:
                 "port": self.port,
                 "baudrate": self.baudrate,
                 "job_running": self._job_running,
+                "job_paused": self._job_paused,
                 "job_total_lines": total,
                 "job_current_line": self._job_index,
                 "job_progress": 0 if total == 0 else round((self._job_index / total) * 100, 2),
@@ -222,6 +275,7 @@ class SerialStreamer:
             self._outstanding_payload_sizes.append(len(payload))
             self._outstanding_chars += len(payload)
             self._sent_lines += 1
+            self._last_ack_time = time.monotonic()
 
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
@@ -246,12 +300,17 @@ class SerialStreamer:
             with self._state_lock:
                 if not self._job_running:
                     return
+                is_paused = self._job_paused
                 conn = self._serial_conn
 
             if not conn or not conn.is_open:
                 with self._state_lock:
                     self._job_running = False
                 return
+
+            if is_paused:
+                time.sleep(0.02)
+                continue
 
             made_progress = False
             while True:
@@ -279,6 +338,20 @@ class SerialStreamer:
                         self._mode = MachineMode.IDLE
                     return
 
+                stalled = (
+                    bool(self._outstanding_payload_sizes)
+                    and (time.monotonic() - self._last_ack_time) > self._ack_timeout_seconds
+                )
+                if stalled:
+                    self._job_running = False
+                    self._job_paused = False
+                    self._job_state = JobState.ERROR
+                    self._mode = MachineMode.ERROR
+                    self._last_error_message = "Streaming stalled: acknowledgement timeout"
+                    self._outstanding_payload_sizes.clear()
+                    self._outstanding_chars = 0
+                    return
+
             if not made_progress:
                 time.sleep(0.003)
 
@@ -304,24 +377,44 @@ class SerialStreamer:
             if not message:
                 continue
 
-            lowered = message.lower()
+            # Some controllers prepend control chars; normalize first so ack parsing does not miss "ok".
+            normalized = re.sub(r"[\x00-\x1f\x7f]", "", message).strip()
+            if not normalized:
+                continue
+
+            lowered = normalized.lower()
             with self._state_lock:
-                self._last_messages.append(message)
+                self._last_messages.append(normalized)
+
+                if "resend" in lowered or lowered.startswith("rs "):
+                    self._errors += 1
+                    self._job_running = False
+                    self._job_paused = False
+                    self._mode = MachineMode.ERROR
+                    self._job_state = JobState.ERROR
+                    self._last_error_message = normalized
+                    continue
+
                 if lowered.startswith("alarm"):
+                    self._job_running = False
+                    self._job_paused = False
                     self._mode = MachineMode.ALARM
                     self._job_state = JobState.ERROR
-                    self._last_error_message = message
+                    self._last_error_message = normalized
 
-                if lowered.startswith("ok"):
+                if self._ok_re.search(lowered):
                     if self._outstanding_payload_sizes:
                         payload_size = self._outstanding_payload_sizes.popleft()
                         self._outstanding_chars = max(0, self._outstanding_chars - payload_size)
                         self._acked_lines += 1
+                        self._last_ack_time = time.monotonic()
                 elif lowered.startswith("error"):
                     self._errors += 1
+                    self._job_running = False
+                    self._job_paused = False
                     self._mode = MachineMode.ERROR
                     self._job_state = JobState.ERROR
-                    self._last_error_message = message
+                    self._last_error_message = normalized
                     if self._outstanding_payload_sizes:
                         payload_size = self._outstanding_payload_sizes.popleft()
                         self._outstanding_chars = max(0, self._outstanding_chars - payload_size)

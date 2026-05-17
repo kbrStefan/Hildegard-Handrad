@@ -43,6 +43,15 @@ class CNCController:
     def stop_job(self) -> None:
         self._streamer.stop_job()
 
+    def pause_job(self) -> None:
+        self._streamer.pause_job()
+
+    def resume_job(self) -> None:
+        self._streamer.resume_job()
+
+    def emergency_stop(self) -> None:
+        self._streamer.emergency_stop()
+
     def status(self) -> dict[str, Any]:
         return self._streamer.status()
 
