@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hildegard-Handrad</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="card">
+        <h1>Hildegard-Handrad</h1>
+        <p>Remote Control App for Marlin based CNC machines</p>
+      </header>
+
+      <section class="card grid-2">
+        <label>
+          Serial Port
+          <input id="portInput" type="text" value="/dev/ttyACM0" />
+        </label>
+        <label>
+          Baudrate
+          <input id="baudrateInput" type="number" value="115200" />
+        </label>
+        <button id="connectBtn" class="btn primary" type="button">Connect</button>
+        <button id="disconnectBtn" class="btn" type="button">Disconnect</button>
+      </section>
+
+      <section class="card grid-2">
+        <input id="gcodeInput" type="file" accept=".gcode,.nc,.tap,.txt" />
+        <button id="uploadBtn" class="btn primary" type="button">Upload G-code</button>
+        <button id="startBtn" class="btn success" type="button">Start Job</button>
+        <button id="stopBtn" class="btn danger" type="button">Stop Job</button>
+      </section>
+
+      <section class="card">
+        <h2>Machine Motion</h2>
+        <div class="motion-controls">
+          <button id="homeAllBtn" class="btn primary" type="button">Home All (G28)</button>
+          <div class="jog-setup">
+            <label>
+              Jog Step (mm)
+              <input id="jogDistanceInput" type="number" step="0.01" value="1.0" />
+            </label>
+            <label>
+              Feedrate (mm/min)
+              <input id="jogFeedrateInput" type="number" step="1" value="900" />
+            </label>
+          </div>
+          <div class="jog-grid" role="group" aria-label="Jog controls">
+            <button data-axis="Y" data-dir="1" class="btn success jog-btn" type="button">Y+</button>
+            <button data-axis="Z" data-dir="1" class="btn success jog-btn" type="button">Z+</button>
+            <button data-axis="X" data-dir="-1" class="btn jog-btn" type="button">X-</button>
+            <button data-axis="X" data-dir="1" class="btn jog-btn" type="button">X+</button>
+            <button data-axis="Z" data-dir="-1" class="btn danger jog-btn" type="button">Z-</button>
+            <button data-axis="Y" data-dir="-1" class="btn danger jog-btn" type="button">Y-</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card status-panel">
+        <h2>Status</h2>
+        <pre id="statusOut">Loading...</pre>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  </body>
+</html>
