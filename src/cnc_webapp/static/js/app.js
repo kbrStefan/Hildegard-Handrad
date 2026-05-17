@@ -13,7 +13,15 @@ async function callApi(path, options = {}) {
     ...options,
   });
 
-  const data = await response.json();
+  const raw = await response.text();
+  let data;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    const preview = raw.slice(0, 160).replace(/\s+/g, " ").trim();
+    throw new Error(`Server returned non-JSON response (${response.status}): ${preview || "empty body"}`);
+  }
+
   if (!response.ok || !data.ok) {
     throw new Error(data.error || `Request failed: ${response.status}`);
   }
@@ -74,7 +82,15 @@ document.getElementById("uploadBtn").addEventListener("click", async () => {
 
   try {
     const response = await fetch("/api/gcode/upload", { method: "POST", body: formData });
-    const data = await response.json();
+    const raw = await response.text();
+    let data;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      const preview = raw.slice(0, 160).replace(/\s+/g, " ").trim();
+      throw new Error(`Upload returned non-JSON response (${response.status}): ${preview || "empty body"}`);
+    }
+
     if (!response.ok || !data.ok) {
       throw new Error(data.error || `Upload failed: ${response.status}`);
     }
