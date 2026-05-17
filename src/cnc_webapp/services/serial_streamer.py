@@ -36,12 +36,18 @@ class SerialStreamer:
         port: str,
         baudrate: int,
         read_timeout: float,
+        command_ack_idle_timeout_seconds: float,
+        command_ack_default_max_seconds: float,
+        command_ack_homing_max_seconds: float,
         max_inflight_lines: int,
         max_inflight_chars: int,
     ) -> None:
         self.port = port
         self.baudrate = baudrate
         self.read_timeout = read_timeout
+        self.command_ack_idle_timeout_seconds = command_ack_idle_timeout_seconds
+        self.command_ack_default_max_seconds = command_ack_default_max_seconds
+        self.command_ack_homing_max_seconds = command_ack_homing_max_seconds
         self.max_inflight_lines = max_inflight_lines
         self.max_inflight_chars = max_inflight_chars
 
@@ -68,8 +74,11 @@ class SerialStreamer:
         self._last_error_message = ""
         self._ack_timeout_seconds = 30.0
         self._last_ack_time = time.monotonic()
+        self._last_rx_time = time.monotonic()
+        self._last_busy_time = time.monotonic()
 
         self._ok_re = re.compile(r"(^|\s)ok($|\s|:)")
+        self._busy_re = re.compile(r"(^|\s)(echo:)?busy:\s*processing|(^|\s)wait($|\s)")
 
     def connect(self, port: str | None = None, baudrate: int | None = None) -> None:
         with self._state_lock:
@@ -93,6 +102,8 @@ class SerialStreamer:
             self._mode = MachineMode.IDLE
             self._last_error_message = ""
             self._last_ack_time = time.monotonic()
+            self._last_rx_time = time.monotonic()
+            self._last_busy_time = time.monotonic()
 
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -124,6 +135,8 @@ class SerialStreamer:
             self._job_state = JobState.LOADED
             self._job_paused = False
             self._last_ack_time = time.monotonic()
+            self._last_rx_time = time.monotonic()
+            self._last_busy_time = time.monotonic()
             if self._mode not in (MachineMode.ALARM, MachineMode.ERROR):
                 self._mode = MachineMode.IDLE
 
@@ -204,7 +217,12 @@ class SerialStreamer:
 
         command = "G28" if not normalized_axes else f"G28 {' '.join(normalized_axes)}"
         try:
-            self._send_and_wait_ack(command)
+            self._send_and_wait_ack(
+                command,
+                timeout_seconds=self.command_ack_idle_timeout_seconds,
+                max_wait_seconds=self.command_ack_homing_max_seconds,
+                extend_on_busy=True,
+            )
         finally:
             with self._state_lock:
                 if self._mode not in (MachineMode.ALARM, MachineMode.ERROR):
@@ -231,7 +249,12 @@ class SerialStreamer:
         ]
         try:
             for command in commands:
-                self._send_and_wait_ack(command)
+                self._send_and_wait_ack(
+                    command,
+                    timeout_seconds=self.command_ack_idle_timeout_seconds,
+                    max_wait_seconds=self.command_ack_default_max_seconds,
+                    extend_on_busy=True,
+                )
         finally:
             with self._state_lock:
                 if self._mode not in (MachineMode.ALARM, MachineMode.ERROR):
@@ -260,13 +283,20 @@ class SerialStreamer:
                 "last_messages": list(self._last_messages),
             }
 
-    def _send_and_wait_ack(self, line: str, timeout_seconds: float = 3.0) -> None:
+    def _send_and_wait_ack(
+        self,
+        line: str,
+        timeout_seconds: float = 6.0,
+        max_wait_seconds: float | None = None,
+        extend_on_busy: bool = True,
+    ) -> None:
         with self._state_lock:
             conn = self._serial_conn
             if not conn or not conn.is_open:
                 raise RuntimeError("Serial is not connected")
             expected_ack = self._acked_lines + 1
             errors_before = self._errors
+            last_seen_busy = self._last_busy_time
 
         payload = f"{line}\n".encode("ascii", errors="ignore")
         conn.write(payload)
@@ -277,16 +307,27 @@ class SerialStreamer:
             self._sent_lines += 1
             self._last_ack_time = time.monotonic()
 
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
+        start = time.monotonic()
+        absolute_deadline = start + (max_wait_seconds if max_wait_seconds is not None else timeout_seconds)
+        idle_deadline = start + timeout_seconds
+
+        while True:
+            now = time.monotonic()
+            if now >= absolute_deadline:
+                raise TimeoutError(f"Timeout waiting for controller acknowledgement for command: {line}")
+            if now >= idle_deadline:
+                raise TimeoutError(f"No busy/ok received within idle timeout while waiting for command: {line}")
+
             with self._state_lock:
                 if self._acked_lines >= expected_ack:
                     return
                 if self._errors > errors_before:
                     raise RuntimeError("Controller reported an error while executing command")
-            time.sleep(0.01)
 
-        raise TimeoutError(f"Timeout waiting for controller acknowledgement for command: {line}")
+                if extend_on_busy and self._last_busy_time > last_seen_busy:
+                    last_seen_busy = self._last_busy_time
+                    idle_deadline = time.monotonic() + timeout_seconds
+            time.sleep(0.01)
 
     def _can_send_more(self) -> bool:
         return (
@@ -385,6 +426,9 @@ class SerialStreamer:
             lowered = normalized.lower()
             with self._state_lock:
                 self._last_messages.append(normalized)
+                self._last_rx_time = time.monotonic()
+                if self._busy_re.search(lowered):
+                    self._last_busy_time = self._last_rx_time
 
                 if "resend" in lowered or lowered.startswith("rs "):
                     self._errors += 1

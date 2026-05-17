@@ -14,6 +14,9 @@ class CNCController:
             port=config["SERIAL_PORT"],
             baudrate=config["SERIAL_BAUDRATE"],
             read_timeout=config["SERIAL_READ_TIMEOUT"],
+            command_ack_idle_timeout_seconds=config["COMMAND_ACK_IDLE_TIMEOUT_SECONDS"],
+            command_ack_default_max_seconds=config["COMMAND_ACK_DEFAULT_MAX_SECONDS"],
+            command_ack_homing_max_seconds=config["COMMAND_ACK_HOMING_MAX_SECONDS"],
             max_inflight_lines=config["STREAM_MAX_INFLIGHT_LINES"],
             max_inflight_chars=config["STREAM_MAX_INFLIGHT_CHARS"],
         )
